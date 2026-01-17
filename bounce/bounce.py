@@ -47,6 +47,39 @@ def _format_duration(seconds: int) -> str:
     return f"{seconds}s"
 
 
+class LogActionButton(discord.ui.Button):
+    def __init__(
+        self,
+        cog: "Bounce",
+        action: str,
+        guild_id: int,
+        user_id: int,
+    ) -> None:
+        label = "영구밴" if action == "permban" else "밴해제"
+        style = discord.ButtonStyle.danger if action == "permban" else discord.ButtonStyle.secondary
+        custom_id = f"bounce:{action}:{guild_id}:{user_id}"
+        super().__init__(label=label, style=style, custom_id=custom_id)
+        self.cog = cog
+        self.action = action
+        self.guild_id = guild_id
+        self.user_id = user_id
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await self.cog._handle_log_action(
+            interaction=interaction,
+            action=self.action,
+            guild_id=self.guild_id,
+            user_id=self.user_id,
+        )
+
+
+class LogActionView(discord.ui.View):
+    def __init__(self, cog: "Bounce", guild_id: int, user_id: int) -> None:
+        super().__init__(timeout=None)
+        self.add_item(LogActionButton(cog, "permban", guild_id, user_id))
+        self.add_item(LogActionButton(cog, "unban", guild_id, user_id))
+
+
 class Bounce(commands.Cog):
     """Detects quick join/leave and applies a temporary ban."""
 
@@ -67,6 +100,7 @@ class Bounce(commands.Cog):
                 "threshold": 3,
             },
             "tempbans": [],
+            "log_actions": [],
         }
         self.config.register_guild(**default_guild)
         self.join_cache: Dict[int, Dict[int, datetime]] = {}
@@ -74,6 +108,9 @@ class Bounce(commands.Cog):
         self.cleanup_task = self._cleanup_loop
         self.unban_task.start()
         self.cleanup_task.start()
+
+    async def cog_load(self) -> None:
+        await self._restore_log_action_views()
 
     def cog_unload(self) -> None:
         self.unban_task.cancel()
@@ -107,23 +144,53 @@ class Bounce(commands.Cog):
                 members.append(member)
         lines = []
         for member in members[:max_contacts]:
-            lines.append(f"{member.id} (<@{member.id}>)")
+            lines.append(f"- `{member.id}` (<@{member.id}>)")
         remaining = max(0, len(members) - max_contacts)
         if not lines:
             return "담당자 목록이 비어있습니다.", 0
         text = "\n".join(lines)
         if remaining:
-            text = f"{text}\n외 {remaining}명"
+            text = f"{text}\n- 외 {remaining}명"
         return text, len(members)
 
-    async def _send_dm(self, member: discord.Member, contacts_text: str) -> Tuple[bool, str]:
-        message = (
-            "들낙으로 인해 임시 밴되었다.\n"
-            "재고/문의는 아래 담당자에게 DM 하라.\n\n"
-            f"{contacts_text}"
-        )
+    async def _send_dm(
+        self,
+        member: discord.Member,
+        contacts_text: str,
+        ban_seconds: int,
+        unban_time: datetime,
+    ) -> Tuple[bool, str]:
+        guild_name = member.guild.name if member.guild else "해당 서버"
         try:
-            await member.send(message)
+            embed = discord.Embed(
+                title="임시 밴 안내",
+                description=f"안녕하세요. {guild_name} 운영팀입니다.",
+                color=discord.Color.orange(),
+            )
+            embed.add_field(
+                name="사유",
+                value="단시간 입장/퇴장 기록이 확인되어 자동 임시 밴이 적용되었습니다.",
+                inline=False,
+            )
+            embed.add_field(
+                name="밴 정보",
+                value=(
+                    f"기간: {_format_duration(ban_seconds)}\n"
+                    f"해제 예정: {format_dt(unban_time)}"
+                ),
+                inline=False,
+            )
+            embed.add_field(
+                name="문의/재검토",
+                value=(
+                    "문의가 필요하시면 아래 담당자에게 DM으로 연락해 주세요.\n"
+                    "담당자 목록(일부):\n"
+                    f"{contacts_text}"
+                ),
+                inline=False,
+            )
+            embed.set_footer(text="문의 시 상황을 간략히 알려주시면 빠르게 확인하겠습니다.")
+            await member.send(embed=embed)
             return True, "성공"
         except (Forbidden, HTTPException) as exc:
             return False, f"실패: {exc}"
@@ -169,9 +236,102 @@ class Bounce(commands.Cog):
             inline=False,
         )
         try:
-            await channel.send(embed=embed)
+            view = LogActionView(self, guild.id, member_id)
+            message = await channel.send(embed=embed, view=view)
+            await self._store_log_action(guild.id, member_id, message.id)
         except (Forbidden, HTTPException):
             pass
+
+    async def _store_log_action(self, guild_id: int, user_id: int, message_id: int) -> None:
+        conf = self.config.guild_from_id(guild_id)
+        actions = await conf.log_actions()
+        for entry in actions:
+            if entry.get("message_id") == message_id:
+                return
+        actions.append({"user_id": user_id, "message_id": message_id})
+        await conf.log_actions.set(actions[-300:])
+
+    async def _remove_log_action(self, guild_id: int, message_id: int) -> None:
+        conf = self.config.guild_from_id(guild_id)
+        actions = await conf.log_actions()
+        new_actions = [entry for entry in actions if entry.get("message_id") != message_id]
+        if len(new_actions) != len(actions):
+            await conf.log_actions.set(new_actions)
+
+    async def _restore_log_action_views(self) -> None:
+        await self.bot.wait_until_red_ready()
+        for guild in self.bot.guilds:
+            conf = self.config.guild(guild)
+            actions = await conf.log_actions()
+            if not actions:
+                continue
+            cleaned = []
+            for entry in actions:
+                user_id = entry.get("user_id")
+                message_id = entry.get("message_id")
+                if not user_id or not message_id:
+                    continue
+                view = LogActionView(self, guild.id, user_id)
+                try:
+                    self.bot.add_view(view, message_id=message_id)
+                    cleaned.append(entry)
+                except Exception:
+                    continue
+            if len(cleaned) != len(actions):
+                await conf.log_actions.set(cleaned)
+
+    async def _user_is_admin(self, user: discord.abc.User, guild: discord.Guild) -> bool:
+        if user.id == guild.owner_id:
+            return True
+        if await self.bot.is_owner(user):
+            return True
+        member = guild.get_member(user.id)
+        if not member:
+            return False
+        return member.guild_permissions.administrator
+
+    async def _handle_log_action(
+        self,
+        interaction: discord.Interaction,
+        action: str,
+        guild_id: int,
+        user_id: int,
+    ) -> None:
+        guild = interaction.guild
+        if not guild or guild.id != guild_id:
+            await interaction.response.send_message("서버 정보가 일치하지 않습니다.", ephemeral=True)
+            return
+        if not await self._user_is_admin(interaction.user, guild):
+            await interaction.response.send_message("관리자만 사용할 수 있습니다.", ephemeral=True)
+            return
+
+        if action == "permban":
+            try:
+                target = guild.get_member(user_id)
+                if target:
+                    await guild.ban(target, reason="들낙 로그에서 영구 밴", delete_message_seconds=0)
+                else:
+                    await guild.ban(discord.Object(id=user_id), reason="들낙 로그에서 영구 밴", delete_message_seconds=0)
+                await self._remove_tempban(guild, user_id)
+                if interaction.message:
+                    await self._remove_log_action(guild.id, interaction.message.id)
+                await interaction.response.send_message("영구 밴 완료.", ephemeral=True)
+            except (Forbidden, HTTPException) as exc:
+                await interaction.response.send_message(f"영구 밴 실패: {exc}", ephemeral=True)
+            return
+
+        if action == "unban":
+            try:
+                await guild.unban(discord.Object(id=user_id), reason="들낙 로그에서 밴 해제")
+                await self._remove_tempban(guild, user_id)
+                if interaction.message:
+                    await self._remove_log_action(guild.id, interaction.message.id)
+                await interaction.response.send_message("밴 해제 완료.", ephemeral=True)
+            except NotFound:
+                await interaction.response.send_message("현재 밴 상태가 아닙니다.", ephemeral=True)
+            except (Forbidden, HTTPException) as exc:
+                await interaction.response.send_message(f"밴 해제 실패: {exc}", ephemeral=True)
+            return
 
     async def _add_tempban(
         self, guild: discord.Guild, user_id: int, until: datetime, reason: str
@@ -236,7 +396,8 @@ class Bounce(commands.Cog):
         ban_seconds = await self.config.guild(guild).ban_duration_seconds()
         reason = f"들낙 감지(자동) - tempban {_format_duration(ban_seconds)}"
         contacts_text, _ = await self._build_contacts(guild)
-        dm_ok, dm_result = await self._send_dm(member, contacts_text)
+        planned_unban = _utcnow() + timedelta(seconds=ban_seconds)
+        dm_ok, dm_result = await self._send_dm(member, contacts_text, ban_seconds, planned_unban)
         if not dm_ok:
             log_channel = await self._get_log_channel(guild)
             if log_channel:
