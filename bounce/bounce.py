@@ -54,11 +54,12 @@ class LogActionButton(discord.ui.Button):
         action: str,
         guild_id: int,
         user_id: int,
+        disabled: bool = False,
     ) -> None:
         label = "영구밴" if action == "permban" else "밴해제"
         style = discord.ButtonStyle.danger if action == "permban" else discord.ButtonStyle.secondary
         custom_id = f"bounce:{action}:{guild_id}:{user_id}"
-        super().__init__(label=label, style=style, custom_id=custom_id)
+        super().__init__(label=label, style=style, custom_id=custom_id, disabled=disabled)
         self.cog = cog
         self.action = action
         self.guild_id = guild_id
@@ -74,10 +75,10 @@ class LogActionButton(discord.ui.Button):
 
 
 class LogActionView(discord.ui.View):
-    def __init__(self, cog: "Bounce", guild_id: int, user_id: int) -> None:
+    def __init__(self, cog: "Bounce", guild_id: int, user_id: int, disabled: bool = False) -> None:
         super().__init__(timeout=None)
-        self.add_item(LogActionButton(cog, "permban", guild_id, user_id))
-        self.add_item(LogActionButton(cog, "unban", guild_id, user_id))
+        self.add_item(LogActionButton(cog, "permban", guild_id, user_id, disabled=disabled))
+        self.add_item(LogActionButton(cog, "unban", guild_id, user_id, disabled=disabled))
 
 
 class Bounce(commands.Cog):
@@ -361,6 +362,11 @@ class Bounce(commands.Cog):
                 await self._remove_tempban(guild, user_id)
                 if interaction.message:
                     await self._remove_log_action(guild.id, interaction.message.id)
+                    disabled_view = LogActionView(self, guild.id, user_id, disabled=True)
+                    try:
+                        await interaction.message.edit(view=disabled_view)
+                    except (Forbidden, HTTPException):
+                        pass
                 await interaction.response.send_message("영구 밴 완료.", ephemeral=True)
             except (Forbidden, HTTPException) as exc:
                 await interaction.response.send_message(f"영구 밴 실패: {exc}", ephemeral=True)
@@ -372,6 +378,11 @@ class Bounce(commands.Cog):
                 await self._remove_tempban(guild, user_id)
                 if interaction.message:
                     await self._remove_log_action(guild.id, interaction.message.id)
+                    disabled_view = LogActionView(self, guild.id, user_id, disabled=True)
+                    try:
+                        await interaction.message.edit(view=disabled_view)
+                    except (Forbidden, HTTPException):
+                        pass
                 await interaction.response.send_message("밴 해제 완료.", ephemeral=True)
             except NotFound:
                 await interaction.response.send_message("현재 밴 상태가 아닙니다.", ephemeral=True)
