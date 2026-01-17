@@ -75,9 +75,17 @@ class LogActionButton(discord.ui.Button):
 
 
 class LogActionView(discord.ui.View):
-    def __init__(self, cog: "Bounce", guild_id: int, user_id: int, disabled: bool = False) -> None:
+    def __init__(
+        self,
+        cog: "Bounce",
+        guild_id: int,
+        user_id: int,
+        disabled: bool = False,
+        show_permban: bool = True,
+    ) -> None:
         super().__init__(timeout=None)
-        self.add_item(LogActionButton(cog, "permban", guild_id, user_id, disabled=disabled))
+        if show_permban:
+            self.add_item(LogActionButton(cog, "permban", guild_id, user_id, disabled=disabled))
         self.add_item(LogActionButton(cog, "unban", guild_id, user_id, disabled=disabled))
 
 
@@ -283,7 +291,7 @@ class Bounce(commands.Cog):
                 inline=False,
             )
         try:
-            view = LogActionView(self, guild.id, member_id)
+            view = LogActionView(self, guild.id, member_id, show_permban=not permban)
             message = await channel.send(embed=embed, view=view)
             await self._store_log_action(guild.id, member_id, message.id)
         except (Forbidden, HTTPException):
@@ -396,6 +404,34 @@ class Bounce(commands.Cog):
         async with self.config.guild(guild).tempbans() as tempbans:
             tempbans.append({"user_id": user_id, "expires_at": until.timestamp(), "reason": reason})
 
+    async def _try_mod_tempban(
+        self, member: discord.Member, ban_seconds: int, reason: str
+    ) -> bool:
+        mod = self.bot.get_cog("Mod")
+        if not mod:
+            return False
+        until = _utcnow() + timedelta(seconds=ban_seconds)
+        candidates = [
+            ("_tempban", (member.guild, member, until, reason)),
+            ("tempban_user", (member.guild, member, until, reason)),
+            ("tempban_member", (member.guild, member, until, reason)),
+            ("tempban", (member.guild, member, until, reason)),
+        ]
+        for name, args in candidates:
+            func = getattr(mod, name, None)
+            if not func or not callable(func):
+                continue
+            try:
+                result = func(*args)
+                if asyncio.iscoroutine(result):
+                    await result
+                return True
+            except TypeError:
+                continue
+            except Exception:
+                return False
+        return False
+
     async def _remove_tempban(self, guild: discord.Guild, user_id: int) -> None:
         async with self.config.guild(guild).tempbans() as tempbans:
             tempbans[:] = [entry for entry in tempbans if entry["user_id"] != user_id]
@@ -404,6 +440,8 @@ class Bounce(commands.Cog):
         self, member: discord.Member, ban_seconds: int, reason: str
     ) -> Tuple[bool, datetime]:
         unban_time = _utcnow() + timedelta(seconds=ban_seconds)
+        if await self._try_mod_tempban(member, ban_seconds, reason):
+            return True, unban_time
         try:
             await member.guild.ban(member, reason=reason, delete_message_seconds=0)
         except (Forbidden, HTTPException) as exc:
