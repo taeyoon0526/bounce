@@ -70,8 +70,8 @@ class Bounce(commands.Cog):
         }
         self.config.register_guild(**default_guild)
         self.join_cache: Dict[int, Dict[int, datetime]] = {}
-        self.unban_task = self._unban_loop()
-        self.cleanup_task = self._cleanup_loop()
+        self.unban_task = self._unban_loop
+        self.cleanup_task = self._cleanup_loop
         self.unban_task.start()
         self.cleanup_task.start()
 
