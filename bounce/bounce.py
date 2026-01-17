@@ -101,6 +101,7 @@ class Bounce(commands.Cog):
             },
             "tempbans": [],
             "log_actions": [],
+            "bounce_counts": {},
         }
         self.config.register_guild(**default_guild)
         self.join_cache: Dict[int, Dict[int, datetime]] = {}
@@ -157,11 +158,42 @@ class Bounce(commands.Cog):
         self,
         member: discord.Member,
         contacts_text: str,
-        ban_seconds: int,
-        unban_time: datetime,
+        bounce_count: int,
+        ban_seconds: Optional[int] = None,
+        unban_time: Optional[datetime] = None,
+        permban: bool = False,
     ) -> Tuple[bool, str]:
         guild_name = member.guild.name if member.guild else "해당 서버"
         try:
+            if permban:
+                embed = discord.Embed(
+                    title="영구 밴 안내",
+                    description=f"안녕하세요. {guild_name} 운영팀입니다.",
+                    color=discord.Color.red(),
+                )
+                embed.add_field(
+                    name="사유",
+                    value="들낙이 누적 3회 이상 확인되어 영구 밴이 적용되었습니다.",
+                    inline=False,
+                )
+                embed.add_field(
+                    name="누적 횟수",
+                    value=f"{bounce_count}회",
+                    inline=False,
+                )
+                embed.add_field(
+                    name="문의/재검토",
+                    value=(
+                        "이 조치에 대해 문의가 필요하시면 아래 담당자에게 DM으로 연락해 주세요.\n"
+                        "담당자 목록(일부):\n"
+                        f"{contacts_text}"
+                    ),
+                    inline=False,
+                )
+                embed.set_footer(text="문의 시 상황을 간략히 알려주시면 빠르게 확인하겠습니다.")
+                await member.send(embed=embed)
+                return True, "성공"
+
             embed = discord.Embed(
                 title="임시 밴 안내",
                 description=f"안녕하세요. {guild_name} 운영팀입니다.",
@@ -172,12 +204,18 @@ class Bounce(commands.Cog):
                 value="단시간 입장/퇴장 기록이 확인되어 자동 임시 밴이 적용되었습니다.",
                 inline=False,
             )
+            if ban_seconds is not None and unban_time is not None:
+                embed.add_field(
+                    name="밴 정보",
+                    value=(
+                        f"기간: {_format_duration(ban_seconds)}\n"
+                        f"해제 예정: {format_dt(unban_time)}"
+                    ),
+                    inline=False,
+                )
             embed.add_field(
-                name="밴 정보",
-                value=(
-                    f"기간: {_format_duration(ban_seconds)}\n"
-                    f"해제 예정: {format_dt(unban_time)}"
-                ),
+                name="누적 횟수",
+                value=f"{bounce_count}회",
                 inline=False,
             )
             embed.add_field(
@@ -185,7 +223,8 @@ class Bounce(commands.Cog):
                 value=(
                     "문의가 필요하시면 아래 담당자에게 DM으로 연락해 주세요.\n"
                     "담당자 목록(일부):\n"
-                    f"{contacts_text}"
+                    f"{contacts_text}\n\n"
+                    "서버 초대 링크: https://discord.gg/nexiott2"
                 ),
                 inline=False,
             )
@@ -204,8 +243,10 @@ class Bounce(commands.Cog):
         leave_time: datetime,
         elapsed_seconds: float,
         dm_result: str,
-        ban_seconds: int,
-        unban_time: datetime,
+        ban_seconds: Optional[int],
+        unban_time: Optional[datetime],
+        bounce_count: int,
+        permban: bool,
     ) -> None:
         channel = await self._get_log_channel(guild)
         if not channel:
@@ -230,11 +271,16 @@ class Bounce(commands.Cog):
             inline=False,
         )
         embed.add_field(name="DM", value=dm_result, inline=False)
-        embed.add_field(
-            name="밴",
-            value=f"기간: {_format_duration(ban_seconds)}\n해제 예정: {format_dt(unban_time)}",
-            inline=False,
-        )
+        embed.add_field(name="들낙 누적", value=f"{bounce_count}회", inline=False)
+        if permban:
+            embed.title = "들낙 감지 - 영구밴"
+            embed.add_field(name="밴", value="영구 밴", inline=False)
+        elif ban_seconds is not None and unban_time is not None:
+            embed.add_field(
+                name="밴",
+                value=f"기간: {_format_duration(ban_seconds)}\n해제 예정: {format_dt(unban_time)}",
+                inline=False,
+            )
         try:
             view = LogActionView(self, guild.id, member_id)
             message = await channel.send(embed=embed, view=view)
@@ -393,11 +439,21 @@ class Bounce(commands.Cog):
         is_repeat = await self._should_trigger_repeat(guild, member)
         if elapsed > window_seconds and not is_repeat:
             return
-        ban_seconds = await self.config.guild(guild).ban_duration_seconds()
-        reason = f"들낙 감지(자동) - tempban {_format_duration(ban_seconds)}"
         contacts_text, _ = await self._build_contacts(guild)
+        async with self.config.guild(guild).bounce_counts() as counts:
+            current = counts.get(str(member.id), 0) + 1
+            counts[str(member.id)] = current
+        is_permban = current >= 3
+        ban_seconds = await self.config.guild(guild).ban_duration_seconds()
         planned_unban = _utcnow() + timedelta(seconds=ban_seconds)
-        dm_ok, dm_result = await self._send_dm(member, contacts_text, ban_seconds, planned_unban)
+        dm_ok, dm_result = await self._send_dm(
+            member,
+            contacts_text,
+            bounce_count=current,
+            ban_seconds=None if is_permban else ban_seconds,
+            unban_time=None if is_permban else planned_unban,
+            permban=is_permban,
+        )
         if not dm_ok:
             log_channel = await self._get_log_channel(guild)
             if log_channel:
@@ -405,15 +461,34 @@ class Bounce(commands.Cog):
                     await log_channel.send(f"DM 실패: {member} ({member.id}) - {dm_result}")
                 except (Forbidden, HTTPException):
                     pass
-        ban_ok, unban_time = await self._handle_tempban(member, ban_seconds, reason)
-        if not ban_ok:
-            log_channel = await self._get_log_channel(guild)
-            if log_channel:
-                try:
-                    await log_channel.send(f"밴 실패: {member} ({member.id})")
-                except (Forbidden, HTTPException):
-                    pass
-            return
+        if is_permban:
+            try:
+                await guild.ban(
+                    member,
+                    reason="들낙 감지(자동) - 영구 밴",
+                    delete_message_seconds=0,
+                )
+                await self._remove_tempban(guild, member.id)
+                unban_time = None
+            except (Forbidden, HTTPException):
+                log_channel = await self._get_log_channel(guild)
+                if log_channel:
+                    try:
+                        await log_channel.send(f"밴 실패: {member} ({member.id})")
+                    except (Forbidden, HTTPException):
+                        pass
+                return
+        else:
+            reason = f"들낙 감지(자동) - tempban {_format_duration(ban_seconds)}"
+            ban_ok, unban_time = await self._handle_tempban(member, ban_seconds, reason)
+            if not ban_ok:
+                log_channel = await self._get_log_channel(guild)
+                if log_channel:
+                    try:
+                        await log_channel.send(f"밴 실패: {member} ({member.id})")
+                    except (Forbidden, HTTPException):
+                        pass
+                return
         await self._log_action(
             guild=guild,
             member_id=member.id,
@@ -422,8 +497,10 @@ class Bounce(commands.Cog):
             leave_time=leave_time,
             elapsed_seconds=elapsed,
             dm_result="성공" if dm_ok else dm_result,
-            ban_seconds=ban_seconds,
-            unban_time=unban_time,
+            ban_seconds=None if is_permban else ban_seconds,
+            unban_time=None if is_permban else unban_time,
+            bounce_count=current,
+            permban=is_permban,
         )
 
     @tasks.loop(minutes=1)
