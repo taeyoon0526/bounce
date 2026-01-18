@@ -113,7 +113,7 @@ class Bounce(commands.Cog):
             "log_channel_id": None,
             "max_contacts": 25,
             "include_bots": False,
-            "welcome_enabled": True,
+            "welcome_enabled": False,
             "repeat_detection": {
                 "enabled": False,
                 "window_minutes": 5,
