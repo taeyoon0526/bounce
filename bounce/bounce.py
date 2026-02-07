@@ -241,14 +241,14 @@ class LogActionLayout(ui.LayoutView):
                 f"기간: {_format_duration(int(ban_seconds))}\n"
                 f"해제 예정: {format_dt(unban_time)}"
             ))
-        self.add_item(info_box)
-        self.add_item(ui.Separator(spacing=discord.SeparatorSpacing.large))
+        info_box.add_item(ui.Separator(spacing=discord.SeparatorSpacing.large))
 
         actions = ui.ActionRow()
         if show_permban:
             actions.add_item(LogActionButton(cog, "permban", guild_id, user_id, disabled=disabled))
         actions.add_item(LogActionButton(cog, "unban", guild_id, user_id, disabled=disabled))
-        self.add_item(actions)
+        info_box.add_item(actions)
+        self.add_item(info_box)
 
 
 class Bounce(commands.Cog):
@@ -479,9 +479,16 @@ class Bounce(commands.Cog):
                     if source_view:
                         status_item = source_view.find_item(ACTION_STATUS_ID)
                         if isinstance(status_item, ui.TextDisplay):
-                            status_item.label = (
-                                f"**조치**\n영구 밴 (관리자: {interaction.user.mention})"
+                            action_time = format_dt(_utcnow())
+                            new_text = (
+                                "**조치**\n"
+                                f"영구 밴 (관리자: {interaction.user.mention})\n"
+                                f"시간: {action_time}"
                             )
+                            if hasattr(status_item, "label"):
+                                status_item.label = new_text
+                            else:
+                                status_item.text = new_text
                         for item in source_view.children:
                             if isinstance(item, ui.ActionRow):
                                 for child in item.children:
@@ -505,9 +512,16 @@ class Bounce(commands.Cog):
                     if source_view:
                         status_item = source_view.find_item(ACTION_STATUS_ID)
                         if isinstance(status_item, ui.TextDisplay):
-                            status_item.label = (
-                                f"**조치**\n밴 해제 (관리자: {interaction.user.mention})"
+                            action_time = format_dt(_utcnow())
+                            new_text = (
+                                "**조치**\n"
+                                f"밴 해제 (관리자: {interaction.user.mention})\n"
+                                f"시간: {action_time}"
                             )
+                            if hasattr(status_item, "label"):
+                                status_item.label = new_text
+                            else:
+                                status_item.text = new_text
                         for item in source_view.children:
                             if isinstance(item, ui.ActionRow):
                                 for child in item.children:
@@ -592,13 +606,13 @@ class Bounce(commands.Cog):
             window_seconds = await self.config.guild(member.guild).window_seconds()
             ban_seconds = await self.config.guild(member.guild).ban_duration_seconds()
             view = ui.LayoutView()
-            view.add_item(ui.TextDisplay("## 🎉 환영합니다!"))
-            view.add_item(ui.TextDisplay(
+            info_box = ui.Container(accent_color=discord.Color.blurple().value)
+            info_box.add_item(ui.TextDisplay("## 🎉 환영합니다!"))
+            info_box.add_item(ui.TextDisplay(
                 f"**{member.guild.name}**에 오신 것을 환영합니다.\n"
                 "서버 이용 전에 간단한 안내 사항을 꼭 확인해 주세요."
             ))
-            view.add_item(ui.Separator(visible=True))
-            info_box = ui.Container(accent_color=discord.Color.blurple().value)
+            info_box.add_item(ui.Separator(visible=True))
             info_box.add_item(ui.TextDisplay(
                 "**⏰️ 들낙(단시간 입장/퇴장) 안내**\n"
                 f"입장 후 **{_format_minutes(window_seconds)}분** 미만으로 퇴장하실 경우,\n"
