@@ -477,26 +477,28 @@ class Bounce(commands.Cog):
                 if interaction.message:
                     await self._remove_log_action(guild.id, interaction.message.id)
                     if source_view:
-                        status_item = source_view.find_item(ACTION_STATUS_ID)
-                        if isinstance(status_item, ui.TextDisplay):
-                            action_time = format_dt(_utcnow())
-                            new_text = (
-                                "**조치**\n"
-                                f"영구 밴 (관리자: {interaction.user.mention})\n"
-                                f"시간: {action_time}"
-                            )
-                            if hasattr(status_item, "text"):
-                                status_item.text = new_text
-                            else:
-                                status_item.label = new_text
-                        for item in list(source_view.children):
-                            if isinstance(item, ui.ActionRow):
-                                try:
-                                    source_view.remove_item(item)
-                                except Exception:
-                                    for child in item.children:
-                                        if isinstance(child, ui.Button):
-                                            child.disabled = True
+                        # Container를 찾고 그 안에서 TextDisplay 찾기
+                        for item in source_view.children:
+                            if isinstance(item, ui.Container):
+                                status_item = item.find_item(ACTION_STATUS_ID)
+                                if isinstance(status_item, ui.TextDisplay):
+                                    action_time = format_dt(_utcnow())
+                                    new_text = (
+                                        "**조치**\n"
+                                        f"영구 밴 (관리자: {interaction.user.mention})\n"
+                                        f"시간: {action_time}"
+                                    )
+                                    if hasattr(status_item, "text"):
+                                        status_item.text = new_text
+                                    else:
+                                        status_item.label = new_text
+                                # Container 안의 ActionRow에서 버튼 처리
+                                for child in list(item.children):
+                                    if isinstance(child, ui.ActionRow):
+                                        for button in child.children:
+                                            if isinstance(button, ui.Button):
+                                                button.disabled = True
+                                break
                         try:
                             await interaction.message.edit(view=source_view)
                         except (Forbidden, HTTPException):
@@ -513,26 +515,28 @@ class Bounce(commands.Cog):
                 if interaction.message:
                     await self._remove_log_action(guild.id, interaction.message.id)
                     if source_view:
-                        status_item = source_view.find_item(ACTION_STATUS_ID)
-                        if isinstance(status_item, ui.TextDisplay):
-                            action_time = format_dt(_utcnow())
-                            new_text = (
-                                "**조치**\n"
-                                f"밴 해제 (관리자: {interaction.user.mention})\n"
-                                f"시간: {action_time}"
-                            )
-                            if hasattr(status_item, "text"):
-                                status_item.text = new_text
-                            else:
-                                status_item.label = new_text
-                        for item in list(source_view.children):
-                            if isinstance(item, ui.ActionRow):
-                                try:
-                                    source_view.remove_item(item)
-                                except Exception:
-                                    for child in item.children:
-                                        if isinstance(child, ui.Button):
-                                            child.disabled = True
+                        # Container를 찾고 그 안에서 TextDisplay 찾기
+                        for item in source_view.children:
+                            if isinstance(item, ui.Container):
+                                status_item = item.find_item(ACTION_STATUS_ID)
+                                if isinstance(status_item, ui.TextDisplay):
+                                    action_time = format_dt(_utcnow())
+                                    new_text = (
+                                        "**조치**\n"
+                                        f"밴 해제 (관리자: {interaction.user.mention})\n"
+                                        f"시간: {action_time}"
+                                    )
+                                    if hasattr(status_item, "text"):
+                                        status_item.text = new_text
+                                    else:
+                                        status_item.label = new_text
+                                # Container 안의 ActionRow에서 버튼 처리
+                                for child in list(item.children):
+                                    if isinstance(child, ui.ActionRow):
+                                        for button in child.children:
+                                            if isinstance(button, ui.Button):
+                                                button.disabled = True
+                                break
                         try:
                             await interaction.message.edit(view=source_view)
                         except (Forbidden, HTTPException):
