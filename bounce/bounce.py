@@ -485,15 +485,18 @@ class Bounce(commands.Cog):
                                 f"영구 밴 (관리자: {interaction.user.mention})\n"
                                 f"시간: {action_time}"
                             )
-                            if hasattr(status_item, "label"):
-                                status_item.label = new_text
-                            else:
+                            if hasattr(status_item, "text"):
                                 status_item.text = new_text
-                        for item in source_view.children:
+                            else:
+                                status_item.label = new_text
+                        for item in list(source_view.children):
                             if isinstance(item, ui.ActionRow):
-                                for child in item.children:
-                                    if isinstance(child, ui.Button):
-                                        child.disabled = True
+                                try:
+                                    source_view.remove_item(item)
+                                except Exception:
+                                    for child in item.children:
+                                        if isinstance(child, ui.Button):
+                                            child.disabled = True
                         try:
                             await interaction.message.edit(view=source_view)
                         except (Forbidden, HTTPException):
@@ -518,15 +521,18 @@ class Bounce(commands.Cog):
                                 f"밴 해제 (관리자: {interaction.user.mention})\n"
                                 f"시간: {action_time}"
                             )
-                            if hasattr(status_item, "label"):
-                                status_item.label = new_text
-                            else:
+                            if hasattr(status_item, "text"):
                                 status_item.text = new_text
-                        for item in source_view.children:
+                            else:
+                                status_item.label = new_text
+                        for item in list(source_view.children):
                             if isinstance(item, ui.ActionRow):
-                                for child in item.children:
-                                    if isinstance(child, ui.Button):
-                                        child.disabled = True
+                                try:
+                                    source_view.remove_item(item)
+                                except Exception:
+                                    for child in item.children:
+                                        if isinstance(child, ui.Button):
+                                            child.disabled = True
                         try:
                             await interaction.message.edit(view=source_view)
                         except (Forbidden, HTTPException):
