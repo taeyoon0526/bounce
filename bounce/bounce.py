@@ -645,7 +645,9 @@ class Bounce(commands.Cog):
             log_channel = await self._get_log_channel(guild)
             if log_channel:
                 try:
-                    await log_channel.send(f"DM 실패: {member} ({member.id}) - {dm_result}")
+                    await log_channel.send(
+                        view=_text_view(f"DM 실패: {member} ({member.id}) - {dm_result}")
+                    )
                 except (Forbidden, HTTPException):
                     pass
         await asyncio.sleep(5)
@@ -662,7 +664,9 @@ class Bounce(commands.Cog):
                 log_channel = await self._get_log_channel(guild)
                 if log_channel:
                     try:
-                        await log_channel.send(f"밴 실패: {member} ({member.id})")
+                        await log_channel.send(
+                            view=_text_view(f"밴 실패: {member} ({member.id})")
+                        )
                     except (Forbidden, HTTPException):
                         pass
                 return
@@ -673,7 +677,9 @@ class Bounce(commands.Cog):
                 log_channel = await self._get_log_channel(guild)
                 if log_channel:
                     try:
-                        await log_channel.send(f"밴 실패: {member} ({member.id})")
+                        await log_channel.send(
+                            view=_text_view(f"밴 실패: {member} ({member.id})")
+                        )
                     except (Forbidden, HTTPException):
                         pass
                 return
@@ -756,15 +762,22 @@ class Bounce(commands.Cog):
         log_channel_id = data["log_channel_id"]
         log_text = f"<#{log_channel_id}>" if log_channel_id else "없음"
         status_lines = [
-            f"상태: {'켜짐' if data['enabled'] else '꺼짐'}",
-            f"판정 시간: {data['window_seconds']}초",
-            f"기본 밴 기간: {_format_duration(data['ban_duration_seconds'])}",
-            f"담당자 역할: {roles_text}",
-            f"로그 채널: {log_text}",
-            f"DM 최대 담당자 수: {data['max_contacts']}",
-            f"봇 포함: {'예' if data['include_bots'] else '아니오'}",
+            f"**상태**: {'켜짐' if data['enabled'] else '꺼짐'}",
+            f"**판정 시간**: {data['window_seconds']}초",
+            f"**기본 밴 기간**: {_format_duration(data['ban_duration_seconds'])}",
+            f"**담당자 역할**: {roles_text}",
+            f"**로그 채널**: {log_text}",
+            f"**DM 최대 담당자 수**: {data['max_contacts']}",
+            f"**봇 포함**: {'예' if data['include_bots'] else '아니오'}",
         ]
-        await ctx.send(view=_text_view("\n".join(status_lines)))
+        view = ui.LayoutView()
+        view.add_item(ui.TextDisplay("## 📊 Bounce 상태"))
+        view.add_item(ui.Separator(visible=True))
+        info_box = ui.Container(accent_color=discord.Color.blurple().value)
+        for line in status_lines:
+            info_box.add_item(ui.TextDisplay(line))
+        view.add_item(info_box)
+        await ctx.send(view=view)
 
     @bounce.command(name="window")
     async def bounce_window(self, ctx: commands.Context, seconds: int) -> None:
