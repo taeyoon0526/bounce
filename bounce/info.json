@@ -2,7 +2,7 @@
   "name": "Bounce",
   "short": "들낙 감지 및 임시 밴",
   "description": "서버 입장 후 짧은 시간 내 퇴장하는 들낙을 감지해 DM 안내 후 임시 밴을 적용하는 Cog",
-  "author": ["Codex"],
+  "author": ["taeyoon_0526"],
   "version": "1.0.0",
   "min_bot_version": "3.5.0",
   "end_user_data_statement": "이 Cog는 길드별 설정(판정 시간, 밴 기간, 역할, 로그 채널)과 임시 밴 만료 정보를 저장합니다.",
