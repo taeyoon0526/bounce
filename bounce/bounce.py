@@ -885,6 +885,42 @@ class Bounce(commands.Cog):
         await self.config.guild(ctx.guild).welcome_enabled.set(value)
         await ctx.send(view=_text_view(f"환영 DM이 {'켜짐' if value else '꺼짐'}으로 설정되었습니다."))
 
+    @bounce.command(name="count")
+    async def bounce_count(self, ctx: commands.Context, user: discord.User, value: str) -> None:
+        """들낙 누적 횟수를 증감/초기화합니다. 예: !bounce count @user +1, -1, reset"""
+        value_lower = value.lower().strip()
+        async with self.config.guild(ctx.guild).bounce_counts() as counts:
+            current = int(counts.get(str(user.id), 0))
+            if value_lower in {"reset", "clear"}:
+                new_value = 0
+                action_text = "초기화"
+            else:
+                try:
+                    delta = int(value)
+                except ValueError:
+                    await ctx.send(view=_text_view("형식이 올바르지 않습니다. 예: +1, -1, reset"))
+                    return
+                new_value = max(0, current + delta)
+                if delta > 0:
+                    action_text = "증가"
+                elif delta < 0:
+                    action_text = "감소"
+                else:
+                    action_text = "변경 없음"
+            counts[str(user.id)] = new_value
+        await ctx.send(
+            view=_text_view(
+                "\n".join(
+                    [
+                        f"대상: {user.mention} ({user.id})",
+                        f"조치: {action_text}",
+                        f"이전 횟수: {current}",
+                        f"현재 횟수: {new_value}",
+                    ]
+                )
+            )
+        )
+
 
 async def setup(bot: Red) -> None:
     await bot.add_cog(Bounce(bot))
