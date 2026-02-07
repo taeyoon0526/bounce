@@ -16,6 +16,8 @@ from redbot.core.bot import Red
 
 DURATION_RE = re.compile(r"^(?P<value>\d+)(?P<unit>[mhd])$")
 
+ACTION_STATUS_ID = 9101
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -60,7 +62,9 @@ def _format_days(seconds: int) -> str:
 
 def _text_view(text: str) -> ui.LayoutView:
     view = ui.LayoutView()
-    view.add_item(ui.TextDisplay(text))
+    box = ui.Container(accent_color=discord.Color.blurple().value)
+    box.add_item(ui.TextDisplay(text))
+    view.add_item(box)
     return view
 
 
@@ -103,12 +107,12 @@ def _dm_layout(
     invite_url: Optional[str],
 ) -> ui.LayoutView:
     view = ui.LayoutView()
+    header_box = ui.Container(accent_color=discord.Color.red().value if permban else discord.Color.orange().value)
     if permban:
-        view.add_item(ui.TextDisplay("## ⛔ 영구 밴 안내"))
-        view.add_item(ui.TextDisplay(f"안녕하세요. {guild_name} 운영팀입니다."))
-        view.add_item(ui.Separator(visible=True))
-
-        info_box = ui.Container(accent_color=discord.Color.red().value)
+        header_box.add_item(ui.TextDisplay("## ⛔ 영구 밴 안내"))
+        header_box.add_item(ui.TextDisplay(f"안녕하세요. {guild_name} 운영팀입니다."))
+        header_box.add_item(ui.Separator(visible=True))
+        info_box = header_box
         info_box.add_item(ui.TextDisplay(
             "**사유**\n"
             "들낙이 누적 3회 이상 확인되어 영구 밴이 적용되었습니다."
@@ -122,16 +126,15 @@ def _dm_layout(
         ))
         if invite_url:
             info_box.add_item(ui.TextDisplay(f"**서버 초대 링크**\n{invite_url}"))
+        info_box.add_item(ui.Separator(spacing=discord.SeparatorSpacing.small))
+        info_box.add_item(ui.TextDisplay("문의 시 상황을 간략히 알려주시면 빠르게 확인하겠습니다."))
         view.add_item(info_box)
-        view.add_item(ui.Separator(spacing=discord.SeparatorSpacing.small))
-        view.add_item(ui.TextDisplay("문의 시 상황을 간략히 알려주시면 빠르게 확인하겠습니다."))
         return view
 
-    view.add_item(ui.TextDisplay("## ⚠️ 임시 밴 안내"))
-    view.add_item(ui.TextDisplay(f"안녕하세요. {guild_name} 운영팀입니다."))
-    view.add_item(ui.Separator(visible=True))
-
-    info_box = ui.Container(accent_color=discord.Color.orange().value)
+    header_box.add_item(ui.TextDisplay("## ⚠️ 임시 밴 안내"))
+    header_box.add_item(ui.TextDisplay(f"안녕하세요. {guild_name} 운영팀입니다."))
+    header_box.add_item(ui.Separator(visible=True))
+    info_box = header_box
     info_box.add_item(ui.TextDisplay(
         "**사유**\n"
         "단시간 입장/퇴장 기록이 확인되어 자동 임시 밴이 적용되었습니다."
@@ -151,9 +154,9 @@ def _dm_layout(
     ))
     if invite_url:
         info_box.add_item(ui.TextDisplay(f"**서버 초대 링크**\n{invite_url}"))
+    info_box.add_item(ui.Separator(spacing=discord.SeparatorSpacing.small))
+    info_box.add_item(ui.TextDisplay("문의 시 상황을 간략히 알려주시면 빠르게 확인하겠습니다."))
     view.add_item(info_box)
-    view.add_item(ui.Separator(spacing=discord.SeparatorSpacing.small))
-    view.add_item(ui.TextDisplay("문의 시 상황을 간략히 알려주시면 빠르게 확인하겠습니다."))
     return view
 
 
@@ -198,10 +201,9 @@ class LogActionLayout(ui.LayoutView):
         super().__init__(timeout=None)
         permban = bool(payload.get("permban"))
         title = "들낙 감지 - 영구밴" if permban else "들낙 감지 - 임시밴"
-        self.add_item(ui.TextDisplay(f"## {title}"))
-        self.add_item(ui.Separator(visible=True))
-
         info_box = ui.Container(accent_color=discord.Color.red().value)
+        info_box.add_item(ui.TextDisplay(f"## {title}"))
+        info_box.add_item(ui.Separator(visible=True))
         member_tag = payload.get("member_tag", "알 수 없음")
         join_ts = float(payload.get("join_time", 0.0))
         leave_ts = float(payload.get("leave_time", 0.0))
@@ -224,6 +226,11 @@ class LogActionLayout(ui.LayoutView):
             f"경과: {elapsed_seconds:.1f}초"
         ))
         info_box.add_item(ui.TextDisplay(f"**DM**\n{dm_result}"))
+        action_status = payload.get("action_status")
+        if action_status:
+            info_box.add_item(ui.TextDisplay(str(action_status), id=ACTION_STATUS_ID))
+        else:
+            info_box.add_item(ui.TextDisplay("**조치**\n대기 중", id=ACTION_STATUS_ID))
         info_box.add_item(ui.TextDisplay(f"**들낙 누적**\n{bounce_count}회"))
         if permban:
             info_box.add_item(ui.TextDisplay("**밴**\n영구 밴"))
@@ -470,6 +477,11 @@ class Bounce(commands.Cog):
                 if interaction.message:
                     await self._remove_log_action(guild.id, interaction.message.id)
                     if source_view:
+                        status_item = source_view.find_item(ACTION_STATUS_ID)
+                        if isinstance(status_item, ui.TextDisplay):
+                            status_item.label = (
+                                f"**조치**\n영구 밴 (관리자: {interaction.user.mention})"
+                            )
                         for item in source_view.children:
                             if isinstance(item, ui.ActionRow):
                                 for child in item.children:
@@ -491,6 +503,11 @@ class Bounce(commands.Cog):
                 if interaction.message:
                     await self._remove_log_action(guild.id, interaction.message.id)
                     if source_view:
+                        status_item = source_view.find_item(ACTION_STATUS_ID)
+                        if isinstance(status_item, ui.TextDisplay):
+                            status_item.label = (
+                                f"**조치**\n밴 해제 (관리자: {interaction.user.mention})"
+                            )
                         for item in source_view.children:
                             if isinstance(item, ui.ActionRow):
                                 for child in item.children:
@@ -641,15 +658,7 @@ class Bounce(commands.Cog):
             unban_time=None if is_permban else planned_unban,
             permban=is_permban,
         )
-        if not dm_ok:
-            log_channel = await self._get_log_channel(guild)
-            if log_channel:
-                try:
-                    await log_channel.send(
-                        view=_text_view(f"DM 실패: {member} ({member.id}) - {dm_result}")
-                    )
-                except (Forbidden, HTTPException):
-                    pass
+        # DM 실패 로그는 출력하지 않음
         await asyncio.sleep(5)
         if is_permban:
             try:
@@ -771,9 +780,9 @@ class Bounce(commands.Cog):
             f"**봇 포함**: {'예' if data['include_bots'] else '아니오'}",
         ]
         view = ui.LayoutView()
-        view.add_item(ui.TextDisplay("## 📊 Bounce 상태"))
-        view.add_item(ui.Separator(visible=True))
         info_box = ui.Container(accent_color=discord.Color.blurple().value)
+        info_box.add_item(ui.TextDisplay("## 📊 Bounce 상태"))
+        info_box.add_item(ui.Separator(visible=True))
         for line in status_lines:
             info_box.add_item(ui.TextDisplay(line))
         view.add_item(info_box)
