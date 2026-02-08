@@ -405,6 +405,30 @@ class Bounce(commands.Cog):
         if len(new_actions) != len(actions):
             await conf.log_actions.set(new_actions)
 
+    async def _get_log_action_entry(
+        self, guild_id: int, message_id: int
+    ) -> Optional[Dict[str, object]]:
+        conf = self.config.guild_from_id(guild_id)
+        actions = await conf.log_actions()
+        for entry in actions:
+            if entry.get("message_id") == message_id:
+                return entry
+        return None
+
+    async def _update_log_action_payload(
+        self, guild_id: int, message_id: int, payload: Dict[str, object]
+    ) -> None:
+        conf = self.config.guild_from_id(guild_id)
+        actions = await conf.log_actions()
+        updated = False
+        for entry in actions:
+            if entry.get("message_id") == message_id:
+                entry["payload"] = payload
+                updated = True
+                break
+        if updated:
+            await conf.log_actions.set(actions)
+
     async def _restore_log_action_views(self) -> None:
         await self.bot.wait_until_red_ready()
         for guild in self.bot.guilds:
@@ -468,6 +492,20 @@ class Bounce(commands.Cog):
 
         if action == "permban":
             try:
+                if not interaction.response.is_done():
+                    await interaction.response.defer(ephemeral=True)
+                if interaction.message:
+                    entry = await self._get_log_action_entry(guild.id, interaction.message.id)
+                    payload = entry.get("payload") if entry else None
+                    if isinstance(payload, dict) and payload.get("action_status"):
+                        await interaction.followup.send(
+                            view=_text_view(
+                                "이미 조치가 완료되었습니다.\n"
+                                f"{payload.get('action_status')}"
+                            ),
+                            ephemeral=True,
+                        )
+                        return
                 target = guild.get_member(user_id)
                 if target:
                     await guild.ban(target, reason="들낙 로그에서 영구 밴", delete_message_seconds=0)
@@ -475,77 +513,88 @@ class Bounce(commands.Cog):
                     await guild.ban(discord.Object(id=user_id), reason="들낙 로그에서 영구 밴", delete_message_seconds=0)
                 await self._remove_tempban(guild, user_id)
                 if interaction.message:
-                    await self._remove_log_action(guild.id, interaction.message.id)
-                    if source_view:
-                        # Container를 찾고 그 안에서 TextDisplay 찾기
-                        for item in source_view.children:
-                            if isinstance(item, ui.Container):
-                                status_item = item.find_item(ACTION_STATUS_ID)
-                                if isinstance(status_item, ui.TextDisplay):
-                                    action_time = format_dt(_utcnow())
-                                    new_text = (
-                                        "**조치**\n"
-                                        f"영구 밴 (관리자: {interaction.user.mention})\n"
-                                        f"시간: {action_time}"
-                                    )
-                                    if hasattr(status_item, "text"):
-                                        status_item.text = new_text
-                                    else:
-                                        status_item.label = new_text
-                                # Container 안의 ActionRow에서 버튼 처리
-                                for child in list(item.children):
-                                    if isinstance(child, ui.ActionRow):
-                                        for button in child.children:
-                                            if isinstance(button, ui.Button):
-                                                button.disabled = True
-                                break
-                        try:
-                            await interaction.message.edit(view=source_view)
-                        except (Forbidden, HTTPException):
-                            pass
-                await interaction.response.send_message(view=_text_view("영구 밴 완료."), ephemeral=True)
+                    entry = await self._get_log_action_entry(guild.id, interaction.message.id)
+                    payload = entry.get("payload") if entry else {}
+                    if not isinstance(payload, dict):
+                        payload = {}
+                    action_time = format_dt(_utcnow())
+                    payload["action_status"] = (
+                        "**조치**\n"
+                        f"영구 밴 (관리자: {interaction.user.mention})\n"
+                        f"시간: {action_time}"
+                    )
+                    await self._update_log_action_payload(guild.id, interaction.message.id, payload)
+                    try:
+                        new_view = LogActionLayout(
+                            self,
+                            guild.id,
+                            user_id,
+                            payload,
+                            show_permban=not bool(payload.get("permban")),
+                        )
+                        await interaction.message.edit(view=new_view)
+                    except (Forbidden, HTTPException):
+                        pass
+                await interaction.followup.send(view=_text_view("영구 밴 완료."), ephemeral=True)
             except (Forbidden, HTTPException) as exc:
-                await interaction.response.send_message(view=_text_view(f"영구 밴 실패: {exc}"), ephemeral=True)
+                if interaction.response.is_done():
+                    await interaction.followup.send(view=_text_view(f"영구 밴 실패: {exc}"), ephemeral=True)
+                else:
+                    await interaction.response.send_message(view=_text_view(f"영구 밴 실패: {exc}"), ephemeral=True)
             return
 
         if action == "unban":
             try:
+                if not interaction.response.is_done():
+                    await interaction.response.defer(ephemeral=True)
+                if interaction.message:
+                    entry = await self._get_log_action_entry(guild.id, interaction.message.id)
+                    payload = entry.get("payload") if entry else None
+                    if isinstance(payload, dict) and payload.get("action_status"):
+                        await interaction.followup.send(
+                            view=_text_view(
+                                "이미 조치가 완료되었습니다.\n"
+                                f"{payload.get('action_status')}"
+                            ),
+                            ephemeral=True,
+                        )
+                        return
                 await guild.unban(discord.Object(id=user_id), reason="들낙 로그에서 밴 해제")
                 await self._remove_tempban(guild, user_id)
                 if interaction.message:
-                    await self._remove_log_action(guild.id, interaction.message.id)
-                    if source_view:
-                        # Container를 찾고 그 안에서 TextDisplay 찾기
-                        for item in source_view.children:
-                            if isinstance(item, ui.Container):
-                                status_item = item.find_item(ACTION_STATUS_ID)
-                                if isinstance(status_item, ui.TextDisplay):
-                                    action_time = format_dt(_utcnow())
-                                    new_text = (
-                                        "**조치**\n"
-                                        f"밴 해제 (관리자: {interaction.user.mention})\n"
-                                        f"시간: {action_time}"
-                                    )
-                                    if hasattr(status_item, "text"):
-                                        status_item.text = new_text
-                                    else:
-                                        status_item.label = new_text
-                                # Container 안의 ActionRow에서 버튼 처리
-                                for child in list(item.children):
-                                    if isinstance(child, ui.ActionRow):
-                                        for button in child.children:
-                                            if isinstance(button, ui.Button):
-                                                button.disabled = True
-                                break
-                        try:
-                            await interaction.message.edit(view=source_view)
-                        except (Forbidden, HTTPException):
-                            pass
-                await interaction.response.send_message(view=_text_view("밴 해제 완료."), ephemeral=True)
+                    entry = await self._get_log_action_entry(guild.id, interaction.message.id)
+                    payload = entry.get("payload") if entry else {}
+                    if not isinstance(payload, dict):
+                        payload = {}
+                    action_time = format_dt(_utcnow())
+                    payload["action_status"] = (
+                        "**조치**\n"
+                        f"밴 해제 (관리자: {interaction.user.mention})\n"
+                        f"시간: {action_time}"
+                    )
+                    await self._update_log_action_payload(guild.id, interaction.message.id, payload)
+                    try:
+                        new_view = LogActionLayout(
+                            self,
+                            guild.id,
+                            user_id,
+                            payload,
+                            show_permban=not bool(payload.get("permban")),
+                        )
+                        await interaction.message.edit(view=new_view)
+                    except (Forbidden, HTTPException):
+                        pass
+                await interaction.followup.send(view=_text_view("밴 해제 완료."), ephemeral=True)
             except NotFound:
-                await interaction.response.send_message(view=_text_view("현재 밴 상태가 아닙니다."), ephemeral=True)
+                if interaction.response.is_done():
+                    await interaction.followup.send(view=_text_view("현재 밴 상태가 아닙니다."), ephemeral=True)
+                else:
+                    await interaction.response.send_message(view=_text_view("현재 밴 상태가 아닙니다."), ephemeral=True)
             except (Forbidden, HTTPException) as exc:
-                await interaction.response.send_message(view=_text_view(f"밴 해제 실패: {exc}"), ephemeral=True)
+                if interaction.response.is_done():
+                    await interaction.followup.send(view=_text_view(f"밴 해제 실패: {exc}"), ephemeral=True)
+                else:
+                    await interaction.response.send_message(view=_text_view(f"밴 해제 실패: {exc}"), ephemeral=True)
             return
 
     async def _add_tempban(
